@@ -14,8 +14,8 @@ import speech_recognition
 
 def main(args):
     parser = argparse.ArgumentParser(description='Transcribe long audio files using webRTC VAD or use the mic input')
-    parser.add_argument('--aggressive', type=int, choices=range(4), required=False,
-                        help='Determines how aggressive filtering out non-speech is. (Interger between 0-3)')
+    parser.add_argument('--aggressive', default=1, type=int, choices=range(4), required=False,
+                        help='Determines how aggressive filtering out non-speech is. (Integer between 0-3)')
     parser.add_argument('--audio', required=False,
                         help='Path to the audio file to run (WAV format)')
     parser.add_argument('--stream', required=False, action='store_true',
@@ -50,8 +50,12 @@ def main(args):
             logging.debug("Processing chunk %05d: [%d, %d)" % (i, start, end))
             audio = np.frombuffer(segment, dtype=np.int16)
             start = timer()
-            audio_data = speech_recognition.AudioData(audio, 16000, 2)
-            text = asr.recognize_google(audio_data, language=args.lang)
+            audio_data = speech_recognition.AudioData(audio, sample_rate, 2)
+            
+            try:
+                text = asr.recognize_google(audio_data, language=args.lang)
+            except speech_recognition.UnknownValueError:
+                text = "Unintelligible"
             run_time = timer() - start
             output = (text, run_time)
             inference_time += output[1]
@@ -75,7 +79,10 @@ def main(args):
             try:
                 while True:
                     audio = asr.listen(source)
-                    print("Google Speech Recognition thinks you said: " + asr.recognize_google(audio, language=args.lang))
+                    try:
+                        print("Google Speech Recognition thinks you said: " + asr.recognize_google(audio, language=args.lang))
+                    except:
+                        print("Speech unintelligible")
             except KeyboardInterrupt:
                 sys.exit(0)
 
