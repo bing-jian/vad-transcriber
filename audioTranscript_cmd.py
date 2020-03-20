@@ -2,25 +2,26 @@ import sys
 import os
 import logging
 import argparse
-import subprocess
-import shlex
 import numpy as np
 import wavTranscriber
 
+from timeit import default_timer as timer
 # Debug helpers
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
+#https://github.com/Uberi/speech_recognition
+import speech_recognition
 
 def main(args):
-    parser = argparse.ArgumentParser(description='Transcribe long audio files using webRTC VAD or use the streaming interface')
+    parser = argparse.ArgumentParser(description='Transcribe long audio files using webRTC VAD or use the mic input')
     parser.add_argument('--aggressive', type=int, choices=range(4), required=False,
                         help='Determines how aggressive filtering out non-speech is. (Interger between 0-3)')
     parser.add_argument('--audio', required=False,
                         help='Path to the audio file to run (WAV format)')
-    parser.add_argument('--model', required=True,
-                        help='Path to directory that contains all model files (output_graph, lm and trie)')
     parser.add_argument('--stream', required=False, action='store_true',
-                        help='To use deepspeech streaming interface')
+                        help='To use microphone input')
+    parser.add_argument('--lang', default='en-US',
+                        help='Language option for running ASR.')
     args = parser.parse_args()
     if args.stream is True:
         print("Opening mic for streaming")
@@ -30,37 +31,33 @@ def main(args):
         parser.print_help()
         parser.exit()
 
-    # Point to a path containing the pre-trained models & resolve ~ if used
-    dirName = os.path.expanduser(args.model)
-
-    # Resolve all the paths of model files
-    output_graph, lm, trie = wavTranscriber.resolve_models(dirName)
-
-    # Load output_graph, alpahbet, lm and trie
-    model_retval = wavTranscriber.load_model(output_graph, lm, trie)
+    asr = speech_recognition.Recognizer()
 
     if args.audio is not None:
-        title_names = ['Filename', 'Duration(s)', 'Inference Time(s)', 'Model Load Time(s)', 'LM Load Time(s)']
-        print("\n%-30s %-20s %-20s %-20s %s" % (title_names[0], title_names[1], title_names[2], title_names[3], title_names[4]))
+        title_names = ['Filename', 'Duration(s)', 'Inference Time(s)']
+        print("\n%-30s %-20s %-20s" % (title_names[0], title_names[1], title_names[2]))
 
         inference_time = 0.0
 
         # Run VAD on the input file
         waveFile = args.audio
-        segments, sample_rate, audio_length = wavTranscriber.vad_segment_generator(waveFile, args.aggressive,
-                                                                                   model_sample_rate=model_retval[3])
-        f = open(waveFile.rstrip(".wav") + ".txt", 'w')
-        logging.debug("Saving Transcript @: %s" % waveFile.rstrip(".wav") + ".txt")
+        segments, sample_rate, audio_length = wavTranscriber.vad_segment_generator(waveFile, args.aggressive)
+        f = open(waveFile.replace(".wav", ".txt"), 'w')
+        logging.debug("Saving Transcript @: %s" % waveFile.replace(".wav",".txt"))
 
-        for i, segment in enumerate(segments):
-            # Run deepspeech on the chunk that just completed VAD
-            logging.debug("Processing chunk %002d" % (i,))
+        for i, (segment, start, end) in enumerate(segments):
+            # Run Google ASR on the chunk that just completed VAD
+            logging.debug("Processing chunk %05d: [%d, %d)" % (i, start, end))
             audio = np.frombuffer(segment, dtype=np.int16)
-            output = wavTranscriber.stt(model_retval[0], audio, sample_rate)
+            start = timer()
+            audio_data = speech_recognition.AudioData(audio, 16000, 2)
+            text = asr.recognize_google(audio_data, language=args.lang)
+            run_time = timer() - start
+            output = (text, run_time)
             inference_time += output[1]
             logging.debug("Transcript: %s" % output[0])
 
-            f.write(output[0] + " ")
+            f.write(output[0] + "\n")
 
         # Summary of the files processed
         f.close()
@@ -68,29 +65,19 @@ def main(args):
         # Extract filename from the full file path
         filename, ext = os.path.split(os.path.basename(waveFile))
         logging.debug("************************************************************************************************************")
-        logging.debug("%-30s %-20s %-20s %-20s %s" % (title_names[0], title_names[1], title_names[2], title_names[3], title_names[4]))
-        logging.debug("%-30s %-20.3f %-20.3f %-20.3f %-0.3f" % (filename + ext, audio_length, inference_time, model_retval[1], model_retval[2]))
+        logging.debug("%-30s %-20s %-20s" % (title_names[0], title_names[1], title_names[2]))
+        logging.debug("%-30s %-20.3f %-20.3f " % (filename + ext, audio_length, inference_time))
         logging.debug("************************************************************************************************************")
-        print("%-30s %-20.3f %-20.3f %-20.3f %-0.3f" % (filename + ext, audio_length, inference_time, model_retval[1], model_retval[2]))
+        print("%-30s %-20.3f %-20.3f " % (filename + ext, audio_length, inference_time))
     else:
-        sctx = model_retval[0].createStream()
-        if os.name == 'nt': # Windows
-            command = 'sox -d -q -V0 -e signed -L -c 1 -b 16 -r 16k -t raw - gain -2'
-        else:
-            command = 'rec -q -V0 -e signed -L -c 1 -b 16 -r 16k -t raw - gain -2'
-        subproc = subprocess.Popen(shlex.split(command),
-                                   stdout=subprocess.PIPE,
-                                   bufsize=0)
-        print('You can start speaking now. Press Control-C to stop recording.')
-
-        try:
-            while True:
-                data = subproc.stdout.read(512)
-                model_retval[0].feedAudioContent(sctx, np.frombuffer(data, np.int16))
-        except KeyboardInterrupt:
-            print('Transcription: ', model_retval[0].finishStream(sctx))
-            subproc.terminate()
-            subproc.wait()
+        with speech_recognition.Microphone() as source:
+            print('You can start speaking now. Press Control-C to stop recording.')
+            try:
+                while True:
+                    audio = asr.listen(source)
+                    print("Google Speech Recognition thinks you said: " + asr.recognize_google(audio, language=args.lang))
+            except KeyboardInterrupt:
+                sys.exit(0)
 
 
 if __name__ == '__main__':
