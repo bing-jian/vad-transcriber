@@ -61,7 +61,7 @@ def frame_generator(frame_duration_ms, audio, sample_rate):
 
 
 def vad_collector(sample_rate, frame_duration_ms,
-                  padding_duration_ms, vad, frames, start_percentage=0.85, stop_percentage = 0.85):
+                  padding_duration_ms, vad, frames, start_percentage=0.85, stop_percentage = 0.20):
     """Filters out non-voiced audio frames.
 
     Given a webrtcvad.Vad and a source of audio frames, yields only

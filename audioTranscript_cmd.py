@@ -8,6 +8,7 @@ import moviepy.editor as mp
 import tempfile
 from timeit import default_timer as timer
 import multiprocessing.dummy
+from multiprocessing import Process
 # Debug helpers
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
@@ -24,11 +25,10 @@ class VideoSplitter:
         self.threads = threads
 
         self.asr = speech_recognition.Recognizer()
-        self.mutex = Lock() # Used for file output operations
         os.makedirs(output, exist_ok=True)
 
     def process_video(self, vid_path):
-        self.vid_data = mp.VideoFileClip(vid_path)
+        self.vid_path = vid_path
         self.sound_data = mp.AudioFileClip(vid_path)
 
         # Temp file for audio wav
@@ -44,8 +44,13 @@ class VideoSplitter:
         self.recognize(path)
         os.remove(path)
 
+    def write_vid(self, vid_path, interval, out_path):
+        vid_data = mp.VideoFileClip(vid_path)
+        subclip = vid_data.subclip(*interval)
+        subclip.write_videofile(
+            out_path + ".mp4", verbose=False, logger=None)
+
     def write_segment(self, segment_name, audio_data, interval, text):
-        self.mutex.acquire()
         path = os.path.join(os.getcwd(), self.output, segment_name)
 
         # Audio clip
@@ -58,15 +63,14 @@ class VideoSplitter:
             f.write(text)
         
         # Video clip
-        subclip = self.vid_data.subclip(*interval)
-        subclip.write_videofile(path + ".mp4", verbose=False, logger=None)
-        self.mutex.release()
+        p = Process(target=self.write_vid, args=(self.vid_path, interval, path))
+        p.start()
+        p.join()
 
     def process_segment(self, rate, segment, start, end):
         segment_name = "%.3f_%.3f" % (start, end)
         audio = np.frombuffer(segment, dtype=np.int16)
         audio_data = speech_recognition.AudioData(audio, rate, 2)
-        
         try:
             text = self.asr.recognize_google(audio_data, language=self.lang)
             logging.debug("Segment %s transcript: %s" % (segment_name, text))
