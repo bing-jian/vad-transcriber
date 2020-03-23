@@ -4,13 +4,88 @@ import logging
 import argparse
 import numpy as np
 import wavTranscriber
-
+import moviepy.editor as mp
+import tempfile
 from timeit import default_timer as timer
+import multiprocessing.dummy
 # Debug helpers
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
 #https://github.com/Uberi/speech_recognition
 import speech_recognition
+from threading import Lock
+
+class VideoSplitter:
+    def __init__(self, aggressive, lang, output, threads):
+        # Initialize arguments
+        self.aggressive = aggressive
+        self.lang = lang
+        self.output = output
+        self.threads = threads
+
+        self.asr = speech_recognition.Recognizer()
+        self.mutex = Lock() # Used for file output operations
+        os.makedirs(output, exist_ok=True)
+
+    def process_video(self, vid_path):
+        self.vid_data = mp.VideoFileClip(vid_path)
+        self.sound_data = mp.AudioFileClip(vid_path)
+
+        # Temp file for audio wav
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        
+        try:
+            # Combine channels and set sample rate
+            self.sound_data.write_audiofile(path, ffmpeg_params=['-ac', '1', '-ar', '16000'], verbose=False, logger=None)
+        except IndexError:
+            logging.error("No audio found in file " + vid_path)
+            return
+
+        self.recognize(path)
+        os.remove(path)
+
+    def write_segment(self, segment_name, audio_data, interval, text):
+        self.mutex.acquire()
+        path = os.path.join(os.getcwd(), self.output, segment_name)
+
+        # Audio clip
+        wav_data = audio_data.get_wav_data()
+        with open(path + '.wav', 'wb') as f:
+            f.write(wav_data)
+
+        # Transcript
+        with open(path + '.txt', 'w') as f:
+            f.write(text)
+        
+        # Video clip
+        subclip = self.vid_data.subclip(*interval)
+        subclip.write_videofile(path + ".mp4", verbose=False, logger=None)
+        self.mutex.release()
+
+    def process_segment(self, rate, segment, start, end):
+        segment_name = "%.3f_%.3f" % (start, end)
+        audio = np.frombuffer(segment, dtype=np.int16)
+        audio_data = speech_recognition.AudioData(audio, rate, 2)
+        
+        try:
+            text = self.asr.recognize_google(audio_data, language=self.lang)
+            logging.debug("Segment %s transcript: %s" % (segment_name, text))
+            self.write_segment(segment_name, audio_data, (start, end), text)
+        except speech_recognition.UnknownValueError:
+            logging.debug("Segment %s unintelligible" % segment_name)
+
+    def worker(self, args):
+        # Called by thread pool
+        self.process_segment(self.sample_rate, *args)
+
+    def recognize(self, waveFile):
+
+        segments, sample_rate, _ = wavTranscriber.vad_segment_generator(waveFile, self.aggressive)
+        self.sample_rate = sample_rate
+        
+        p = multiprocessing.dummy.Pool(self.threads)
+        p.map(self.worker, segments)
+            
 
 def main(args):
     parser = argparse.ArgumentParser(description='Transcribe long audio files using webRTC VAD or use the mic input')
@@ -22,6 +97,8 @@ def main(args):
                         help='To use microphone input')
     parser.add_argument('--lang', default='en-US',
                         help='Language option for running ASR.')
+    parser.add_argument('--out', required=False, help='Output directory')
+    parser.add_argument('--threads', default=1, type=int, required=False, help='Number of concurrent voice segments to process')
     args = parser.parse_args()
     if args.stream is True:
         print("Opening mic for streaming")
@@ -31,60 +108,12 @@ def main(args):
         parser.print_help()
         parser.exit()
 
-    asr = speech_recognition.Recognizer()
+    if not args.out:
+        args.out = "output"
 
     if args.audio is not None:
-        title_names = ['Filename', 'Duration(s)', 'Inference Time(s)']
-        print("\n%-30s %-20s %-20s" % (title_names[0], title_names[1], title_names[2]))
-
-        inference_time = 0.0
-
-        # Run VAD on the input file
-        waveFile = args.audio
-        segments, sample_rate, audio_length = wavTranscriber.vad_segment_generator(waveFile, args.aggressive)
-        f = open(waveFile.replace(".wav", ".txt"), 'w')
-        logging.debug("Saving Transcript @: %s" % waveFile.replace(".wav",".txt"))
-
-        for i, (segment, start, end) in enumerate(segments):
-            # Run Google ASR on the chunk that just completed VAD
-            logging.debug("Processing chunk %05d: [%d, %d)" % (i, start, end))
-            audio = np.frombuffer(segment, dtype=np.int16)
-            start = timer()
-            audio_data = speech_recognition.AudioData(audio, sample_rate, 2)
-            
-            try:
-                text = asr.recognize_google(audio_data, language=args.lang)
-            except speech_recognition.UnknownValueError:
-                text = "Unintelligible"
-            run_time = timer() - start
-            output = (text, run_time)
-            inference_time += output[1]
-            logging.debug("Transcript: %s" % output[0])
-
-            f.write(output[0] + "\n")
-
-        # Summary of the files processed
-        f.close()
-
-        # Extract filename from the full file path
-        filename, ext = os.path.split(os.path.basename(waveFile))
-        logging.debug("************************************************************************************************************")
-        logging.debug("%-30s %-20s %-20s" % (title_names[0], title_names[1], title_names[2]))
-        logging.debug("%-30s %-20.3f %-20.3f " % (filename + ext, audio_length, inference_time))
-        logging.debug("************************************************************************************************************")
-        print("%-30s %-20.3f %-20.3f " % (filename + ext, audio_length, inference_time))
-    else:
-        with speech_recognition.Microphone() as source:
-            print('You can start speaking now. Press Control-C to stop recording.')
-            try:
-                while True:
-                    audio = asr.listen(source)
-                    try:
-                        print("Google Speech Recognition thinks you said: " + asr.recognize_google(audio, language=args.lang))
-                    except:
-                        print("Speech unintelligible")
-            except KeyboardInterrupt:
-                sys.exit(0)
+        vs = VideoSplitter(args.aggressive, args.lang, args.out, args.threads)
+        vs.process_video(args.audio)
 
 
 if __name__ == '__main__':
