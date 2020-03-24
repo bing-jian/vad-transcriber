@@ -15,7 +15,9 @@ logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 #https://github.com/Uberi/speech_recognition
 import speech_recognition
 from threading import Lock
-
+from datetime import timedelta
+import srt
+from pathlib import Path
 class VideoSplitter:
     def __init__(self, aggressive, lang, output, threads):
         # Initialize arguments
@@ -25,6 +27,9 @@ class VideoSplitter:
         self.threads = threads
 
         self.asr = speech_recognition.Recognizer()
+
+        self.transcript_list = []
+        self.mutex = Lock()
         os.makedirs(output, exist_ok=True)
 
     def process_video(self, vid_path):
@@ -41,7 +46,11 @@ class VideoSplitter:
             logging.error("No audio found in file " + vid_path)
             return
 
+        self.transcript_list = []
         self.recognize(path)
+        srt_data = srt.compose(self.transcript_list)
+        with open(Path(vid_path).with_suffix('.srt'), 'w') as f:
+            f.write(srt_data)
         os.remove(path)
 
     def write_vid(self, vid_path, interval, out_path):
@@ -75,6 +84,10 @@ class VideoSplitter:
             text = self.asr.recognize_google(audio_data, language=self.lang)
             logging.debug("Segment %s transcript: %s" % (segment_name, text))
             self.write_segment(segment_name, audio_data, (start, end), text)
+            
+            self.mutex.acquire()
+            self.transcript_list.append(srt.Subtitle(index=len(self.transcript_list)+1, start=timedelta(seconds=start), end=timedelta(seconds=end), content=text))
+            self.mutex.release()
         except speech_recognition.UnknownValueError:
             logging.debug("Segment %s unintelligible" % segment_name)
 
@@ -89,6 +102,7 @@ class VideoSplitter:
         
         p = multiprocessing.dummy.Pool(self.threads)
         p.map(self.worker, segments)
+
             
 
 def main(args):
