@@ -36,6 +36,7 @@ def write_wave(path, audio, sample_rate):
 
 class Frame(object):
     """Represents a "frame" of audio data."""
+
     def __init__(self, bytes, timestamp, duration):
         self.bytes = bytes
         self.timestamp = timestamp
@@ -61,7 +62,7 @@ def frame_generator(frame_duration_ms, audio, sample_rate):
 
 
 def vad_collector(sample_rate, frame_duration_ms,
-                  padding_duration_ms, vad, frames, start_percentage=0.85, stop_percentage = 0.20):
+                  padding_duration_ms, vad, frames, start_percentage=0.85, stop_percentage=0.20):
     """Filters out non-voiced audio frames.
 
     Given a webrtcvad.Vad and a source of audio frames, yields only
@@ -95,7 +96,6 @@ def vad_collector(sample_rate, frame_duration_ms,
     triggered = False
 
     voiced_frames = []
-    frame_start = 0
     for frame_id, frame in enumerate(frames):
         is_speech = vad.is_speech(frame.bytes, sample_rate)
         if not triggered:
@@ -109,7 +109,6 @@ def vad_collector(sample_rate, frame_duration_ms,
                 # We want to yield all the audio we see from now until
                 # we are NOTTRIGGERED, but we have to start with the
                 # audio that's already in the ring buffer.
-                frame_start = frame.timestamp
                 for f, s in ring_buffer:
                     voiced_frames.append(f)
                 ring_buffer.clear()
@@ -124,7 +123,7 @@ def vad_collector(sample_rate, frame_duration_ms,
             # audio we've collected.
             if num_unvoiced > stop_percentage * ring_buffer.maxlen:
                 triggered = False
-                yield b''.join([f.bytes for f in voiced_frames]), frame_start, frame.timestamp + frame.duration
+                yield b''.join([f.bytes for f in voiced_frames]), voiced_frames[0].timestamp, voiced_frames[-1].timestamp + voiced_frames[-1].duration
                 ring_buffer.clear()
                 voiced_frames = []
     if triggered:
@@ -132,4 +131,4 @@ def vad_collector(sample_rate, frame_duration_ms,
     # If we have any leftover voiced audio when we run out of input,
     # yield it.
     if voiced_frames:
-        yield b''.join([f.bytes for f in voiced_frames]), frame_start, frames[-1].timestamp + frames[-1].duration
+        yield b''.join([f.bytes for f in voiced_frames]), voiced_frames[0].timestamp, voiced_frames[-1].timestamp + voiced_frames[-1].duration
