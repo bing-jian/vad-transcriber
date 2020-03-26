@@ -6,6 +6,9 @@ import numpy as np
 import wavTranscriber
 import moviepy.editor as mp
 import tempfile
+import shutil
+import glob
+import subprocess
 from timeit import default_timer as timer
 import multiprocessing.dummy
 from multiprocessing import Process
@@ -119,6 +122,7 @@ def main(args):
                         help='Language option for running ASR.')
     parser.add_argument('--out', required=False, help='Output directory')
     parser.add_argument('--threads', default=1, type=int, required=False, help='Number of concurrent voice segments to process')
+    parser.add_argument('--align', required=False, action='store_true', help='Run Montreal forced alignment using transcript')
     args = parser.parse_args()
     if args.stream is True:
         print("Opening mic for streaming")
@@ -135,6 +139,23 @@ def main(args):
         vs = VideoSplitter(args.aggressive, args.lang, args.out, args.threads)
         vs.process_video(args.audio)
 
+    if args.align:
+
+        shutil.rmtree('tmp', ignore_errors=True)
+
+        shutil.copytree(args.out, 'tmp/1')
+        for p in glob.glob('tmp/1/*.txt'):
+            os.rename(p, ".lab".join(p.rsplit(".txt", 1)))
+        for p in glob.glob('tmp/1/*.mp4'):
+            os.remove(p)
+
+        subprocess.run(["mfa_align", "tmp", "dict.txt",
+                        "english", "out_textgrid"], input=b'n\n')
+        for p in glob.glob('out_textgrid/1/*.TextGrid'):
+            shutil.copy(p, args.out)
+
+        shutil.rmtree('out_textgrid')
+        shutil.rmtree('tmp')
 
 if __name__ == '__main__':
     main(sys.argv[1:])
