@@ -18,6 +18,8 @@ from threading import Lock
 from datetime import timedelta
 import srt
 from pathlib import Path
+
+
 class VideoSplitter:
     def __init__(self, aggressive, lang, output, threads):
         # Initialize arguments
@@ -38,7 +40,7 @@ class VideoSplitter:
 
         # Temp file for audio wav
         fd, path = tempfile.mkstemp(suffix=".wav")
-        
+
         try:
             # Combine channels and set sample rate
             self.sound_data.write_audiofile(path, ffmpeg_params=['-ac', '1', '-ar', '16000'], verbose=False, logger=None)
@@ -70,7 +72,7 @@ class VideoSplitter:
         # Transcript
         with open(path + '.txt', 'w') as f:
             f.write(text)
-        
+
         # Video clip
         p = Process(target=self.write_vid, args=(self.vid_path, interval, path))
         p.start()
@@ -84,7 +86,7 @@ class VideoSplitter:
             text = self.asr.recognize_google(audio_data, language=self.lang)
             logging.debug("Segment %s transcript: %s" % (segment_name, text))
             self.write_segment(segment_name, audio_data, (start, end), text)
-            
+
             self.mutex.acquire()
             self.transcript_list.append(srt.Subtitle(index=len(self.transcript_list)+1, start=timedelta(seconds=start), end=timedelta(seconds=end), content=text))
             self.mutex.release()
@@ -99,11 +101,11 @@ class VideoSplitter:
 
         segments, sample_rate, _ = wavTranscriber.vad_segment_generator(waveFile, self.aggressive)
         self.sample_rate = sample_rate
-        
+
         p = multiprocessing.dummy.Pool(self.threads)
         p.map(self.worker, segments)
 
-            
+
 
 def main(args):
     parser = argparse.ArgumentParser(description='Transcribe long audio files using webRTC VAD or use the mic input')

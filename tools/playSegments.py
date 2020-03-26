@@ -1,10 +1,8 @@
+from pathlib import Path
+import argparse, glob, os, re
+
 import pyaudio
 import wave
-import glob
-import os
-import argparse
-import re
-from pathlib import Path
 
 # https://stackoverflow.com/a/4623518
 def tryint(s):
@@ -37,8 +35,14 @@ chunk = 1024
 for f in files:
     print("Playing " + Path(f).name)
     txt = f.replace("wav", "txt")
-    with open(txt) as t:
-        print(t.readlines())
+    if os.path.exists(txt):
+        with open(txt) as t:
+            print(t.readlines())
+
+    lab = f.replace("wav", "lab")
+    if os.path.exists(lab):
+        with open(lab) as t:
+            print(t.readlines())
 
     wav = wave.open(f, 'rb')
     p = pyaudio.PyAudio()
