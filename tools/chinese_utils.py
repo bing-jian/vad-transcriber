@@ -100,4 +100,4 @@ def num2chinese(num, big=False, simp=True, o=False, twoalt=False):
 
 def normalize_chinese_line(s):
     return ''.join(
-        [num2chinese(x) if x.isnumeric() else x for x in re.split(r'(\d+)', s)])
+        [num2chinese(x) if x.isdigit() else x for x in re.split(r'(\d+)', s)])
