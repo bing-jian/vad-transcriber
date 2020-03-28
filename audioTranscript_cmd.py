@@ -177,13 +177,19 @@ def main(args):
         for p in glob.glob('tmp/1/*.mp4'):
             os.remove(p)
 
-        subprocess.run(["mfa_align", "tmp", "dict.txt",
-                        "english", "out_textgrid"], input=b'n\n')
+        with tempfile.TemporaryDirectory() as tempdir:
+            subprocess.run([
+                "mfa_align", "tmp", "dict.txt", "english", "out_textgrid", '-t',
+                tempdir
+            ],
+                           input=b'n\n')  # Say no if asked to abort
+
         for p in glob.glob('out_textgrid/1/*.TextGrid'):
             shutil.copy(p, args.out)
 
         shutil.rmtree('out_textgrid')
         shutil.rmtree('tmp')
+
 
 if __name__ == '__main__':
     main(sys.argv[1:])
