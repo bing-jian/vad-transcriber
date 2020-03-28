@@ -22,6 +22,8 @@ from datetime import timedelta
 import srt
 from pathlib import Path
 
+# Make sure tools directory is in PYTHONPATH
+from generate_pinyin import process_dir
 
 class VideoSplitter:
 
@@ -149,8 +151,10 @@ def main(args):
                         help='Number of concurrent voice segments to process')
     parser.add_argument('--align',
                         required=False,
-                        action='store_true',
-                        help='Run Montreal forced alignment using transcript')
+                        help='Run Montreal forced alignment in this language')
+    parser.add_argument('--align-dict',
+                        required=False,
+                        help='Dictionary file for forced alignment')
     args = parser.parse_args()
     if args.stream is True:
         print("Opening mic for streaming")
@@ -168,18 +172,24 @@ def main(args):
         vs.process_video(args.audio)
 
     if args.align:
-
+        if not args.align_dict:
+            print("Error: no dictionary file provided for forced alignment")
+            return
         shutil.rmtree('tmp', ignore_errors=True)
 
         shutil.copytree(args.out, 'tmp/1')
-        for p in glob.glob('tmp/1/*.txt'):
-            os.rename(p, ".lab".join(p.rsplit(".txt", 1)))
+
+        if args.align == "mandarin":
+            process_dir('tmp/1')
+        else:
+            for p in glob.glob('tmp/1/*.txt'):
+                os.rename(p, ".lab".join(p.rsplit(".txt", 1)))
         for p in glob.glob('tmp/1/*.mp4'):
             os.remove(p)
 
         with tempfile.TemporaryDirectory() as tempdir:
             subprocess.run([
-                "mfa_align", "tmp", "dict.txt", "english", "out_textgrid", '-t',
+                "mfa_align", "tmp", args.align_dict, args.align, "out_textgrid", '-t',
                 tempdir
             ],
                            input=b'n\n')  # Say no if asked to abort
