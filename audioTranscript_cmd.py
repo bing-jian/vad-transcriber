@@ -1,29 +1,22 @@
-import sys
-import os
-import logging
-import argparse
-import numpy as np
-import wavTranscriber
-import moviepy.editor as mp
-import tempfile
-import shutil
-import glob
-import subprocess
-from timeit import default_timer as timer
+import logging, os, sys
 import multiprocessing.dummy
+
+from datetime import timedelta
 from multiprocessing import Process
-# Debug helpers
-logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+from pathlib import Path
+from threading import Lock
+
+import moviepy.editor as mp
+import numpy as np
 
 #https://github.com/Uberi/speech_recognition
 import speech_recognition
-from threading import Lock
-from datetime import timedelta
 import srt
-from pathlib import Path
 
-# Make sure tools directory is in PYTHONPATH
-from generate_pinyin import process_dir
+import wavTranscriber
+
+# Debug helpers
+logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
 
 class AudioVideoSplitter:
@@ -33,15 +26,13 @@ class AudioVideoSplitter:
         self.aggressive = aggressive
         self.lang = lang
         self.output = output
-        self.threads = threads
+        os.makedirs(output, exist_ok=True)
+        self.input_is_video = False
 
         self.asr = speech_recognition.Recognizer()
-
         self.transcript_list = []
+        self.threads = threads
         self.mutex = Lock()
-        os.makedirs(output, exist_ok=True)
-
-        self.input_is_video = False
 
     def process_input(self, input_path):
         self.input_path = input_path
@@ -87,7 +78,8 @@ class AudioVideoSplitter:
 
         if self.input_is_video:
             # Video clip
-            p = Process(target=self.write_vid, args=(self.input_path, interval, path))
+            p = Process(target=self.write_vid,
+                        args=(self.input_path, interval, path))
             p.start()
             p.join()
 
@@ -124,6 +116,22 @@ class AudioVideoSplitter:
 
 
 def main(args):
+    if args.stream is True:
+        print("Opening mic for streaming")
+    elif args.audio is not None:
+        logging.debug("Transcribing audio file @ %s" % args.audio)
+    else:
+        parser.print_help()
+        parser.exit()
+
+    if args.audio is not None:
+        vs = AudioVideoSplitter(args.aggressive, args.lang, args.out,
+                                args.threads)
+        vs.process_input(args.audio)
+
+
+import argparse
+if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description=
         'Transcribe long audio files using webRTC VAD or use the mic input')
@@ -138,7 +146,7 @@ def main(args):
     )
     parser.add_argument('--audio',
                         required=False,
-                        help='Path to the audio file to run (WAV format)')
+                        help='Path to the input audio (WAV format) or video.')
     parser.add_argument('--stream',
                         required=False,
                         action='store_true',
@@ -146,63 +154,14 @@ def main(args):
     parser.add_argument('--lang',
                         default='en-US',
                         help='Language option for running ASR.')
-    parser.add_argument('--out', required=False, help='Output directory')
+    parser.add_argument('--out',
+                        required=False,
+                        help='Output directory',
+                        default='tmp')
     parser.add_argument('--threads',
                         default=1,
                         type=int,
                         required=False,
                         help='Number of concurrent voice segments to process')
-    parser.add_argument('--align',
-                        required=False,
-                        help='Run Montreal forced alignment in this language')
-    parser.add_argument('--align-dict',
-                        required=False,
-                        help='Dictionary file for forced alignment')
     args = parser.parse_args()
-    if args.stream is True:
-        print("Opening mic for streaming")
-    elif args.audio is not None:
-        logging.debug("Transcribing audio file @ %s" % args.audio)
-    else:
-        parser.print_help()
-        parser.exit()
-
-    if not args.out:
-        args.out = "output"
-
-    if args.audio is not None:
-        vs = AudioVideoSplitter(args.aggressive, args.lang, args.out, args.threads)
-        vs.process_input(args.audio)
-
-    if args.align:
-        if not args.align_dict:
-            print("Error: no dictionary file provided for forced alignment")
-            return
-        shutil.rmtree('tmp', ignore_errors=True)
-
-        shutil.copytree(args.out, 'tmp/1')
-
-        if args.align == "mandarin":
-            process_dir('tmp/1')
-        else:
-            for p in glob.glob('tmp/1/*.txt'):
-                os.rename(p, ".lab".join(p.rsplit(".txt", 1)))
-        for p in glob.glob('tmp/1/*.mp4'):
-            os.remove(p)
-
-        with tempfile.TemporaryDirectory() as tempdir:
-            subprocess.run([
-                "mfa_train_and_align", "tmp", args.align_dict, "out_textgrid", '-t',
-                tempdir
-            ],
-                           input=b'n\n')  # Say no if asked to abort
-
-        for p in glob.glob('out_textgrid/1/*.TextGrid'):
-            shutil.copy(p, args.out)
-
-        shutil.rmtree('out_textgrid')
-        shutil.rmtree('tmp')
-
-
-if __name__ == '__main__':
-    main(sys.argv[1:])
+    main(args)
