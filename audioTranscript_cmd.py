@@ -25,7 +25,8 @@ from pathlib import Path
 # Make sure tools directory is in PYTHONPATH
 from generate_pinyin import process_dir
 
-class VideoSplitter:
+
+class AudioVideoSplitter:
 
     def __init__(self, aggressive, lang, output, threads):
         # Initialize arguments
@@ -40,33 +41,35 @@ class VideoSplitter:
         self.mutex = Lock()
         os.makedirs(output, exist_ok=True)
 
-    def process_video(self, vid_path):
-        self.vid_path = vid_path
-        self.sound_data = mp.AudioFileClip(vid_path)
+        self.input_is_video = False
 
-        # Temp file for audio wav
-        fd, path = tempfile.mkstemp(suffix=".wav")
-
-        try:
-            # Combine channels and set sample rate
-            self.sound_data.write_audiofile(
-                path,
-                ffmpeg_params=['-ac', '1', '-ar', '16000'],
-                verbose=False,
-                logger=None)
-        except IndexError:
-            logging.error("No audio found in file " + vid_path)
-            return
-
+    def process_input(self, input_path):
+        self.input_path = input_path
+        if (Path(input_path).suffix == '.wav'):
+            audio_path = input_path
+        else:
+            # Assume input is a video
+            self.sound_data = mp.AudioFileClip(input_path)
+            audio_path = Path(input_path).with_suffix('.wav').as_posix()
+            try:
+                # Combine channels and set sample rate
+                self.sound_data.write_audiofile(
+                    audio_path,
+                    ffmpeg_params=['-ac', '1', '-ar', '16000'],
+                    verbose=False,
+                    logger=None)
+                self.input_is_video = True
+            except IndexError:
+                logging.error("No audio found in file " + input_path)
+                return
         self.transcript_list = []
-        self.recognize(path)
+        self.recognize(audio_path)
         srt_data = srt.compose(self.transcript_list)
-        with open(Path(vid_path).with_suffix('.srt'), 'w') as f:
+        with open(Path(audio_path).with_suffix('.srt'), 'w') as f:
             f.write(srt_data)
-        os.remove(path)
 
-    def write_vid(self, vid_path, interval, out_path):
-        vid_data = mp.VideoFileClip(vid_path)
+    def write_vid(self, input_path, interval, out_path):
+        vid_data = mp.VideoFileClip(input_path)
         subclip = vid_data.subclip(*interval)
         subclip.write_videofile(out_path + ".mp4", verbose=False, logger=None)
 
@@ -82,10 +85,11 @@ class VideoSplitter:
         with open(path + '.txt', 'w') as f:
             f.write(text)
 
-        # Video clip
-        p = Process(target=self.write_vid, args=(self.vid_path, interval, path))
-        p.start()
-        p.join()
+        if self.input_is_video:
+            # Video clip
+            p = Process(target=self.write_vid, args=(self.input_path, interval, path))
+            p.start()
+            p.join()
 
     def process_segment(self, rate, segment, start, end):
         segment_name = "%.3f_%.3f" % (start, end)
@@ -111,7 +115,6 @@ class VideoSplitter:
         self.process_segment(self.sample_rate, *args)
 
     def recognize(self, waveFile):
-
         segments, sample_rate, _ = wavTranscriber.vad_segment_generator(
             waveFile, self.aggressive)
         self.sample_rate = sample_rate
@@ -168,8 +171,8 @@ def main(args):
         args.out = "output"
 
     if args.audio is not None:
-        vs = VideoSplitter(args.aggressive, args.lang, args.out, args.threads)
-        vs.process_video(args.audio)
+        vs = AudioVideoSplitter(args.aggressive, args.lang, args.out, args.threads)
+        vs.process_input(args.audio)
 
     if args.align:
         if not args.align_dict:
@@ -189,7 +192,7 @@ def main(args):
 
         with tempfile.TemporaryDirectory() as tempdir:
             subprocess.run([
-                "mfa_align", "tmp", args.align_dict, args.align, "out_textgrid", '-t',
+                "mfa_train_and_align", "tmp", args.align_dict, "out_textgrid", '-t',
                 tempdir
             ],
                            input=b'n\n')  # Say no if asked to abort
