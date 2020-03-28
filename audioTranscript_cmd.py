@@ -24,6 +24,7 @@ from pathlib import Path
 
 
 class VideoSplitter:
+
     def __init__(self, aggressive, lang, output, threads):
         # Initialize arguments
         self.aggressive = aggressive
@@ -46,7 +47,11 @@ class VideoSplitter:
 
         try:
             # Combine channels and set sample rate
-            self.sound_data.write_audiofile(path, ffmpeg_params=['-ac', '1', '-ar', '16000'], verbose=False, logger=None)
+            self.sound_data.write_audiofile(
+                path,
+                ffmpeg_params=['-ac', '1', '-ar', '16000'],
+                verbose=False,
+                logger=None)
         except IndexError:
             logging.error("No audio found in file " + vid_path)
             return
@@ -61,8 +66,7 @@ class VideoSplitter:
     def write_vid(self, vid_path, interval, out_path):
         vid_data = mp.VideoFileClip(vid_path)
         subclip = vid_data.subclip(*interval)
-        subclip.write_videofile(
-            out_path + ".mp4", verbose=False, logger=None)
+        subclip.write_videofile(out_path + ".mp4", verbose=False, logger=None)
 
     def write_segment(self, segment_name, audio_data, interval, text):
         path = os.path.join(os.getcwd(), self.output, segment_name)
@@ -91,7 +95,11 @@ class VideoSplitter:
             self.write_segment(segment_name, audio_data, (start, end), text)
 
             self.mutex.acquire()
-            self.transcript_list.append(srt.Subtitle(index=len(self.transcript_list)+1, start=timedelta(seconds=start), end=timedelta(seconds=end), content=text))
+            self.transcript_list.append(
+                srt.Subtitle(index=len(self.transcript_list) + 1,
+                             start=timedelta(seconds=start),
+                             end=timedelta(seconds=end),
+                             content=text))
             self.mutex.release()
         except speech_recognition.UnknownValueError:
             logging.debug("Segment %s unintelligible" % segment_name)
@@ -102,27 +110,47 @@ class VideoSplitter:
 
     def recognize(self, waveFile):
 
-        segments, sample_rate, _ = wavTranscriber.vad_segment_generator(waveFile, self.aggressive)
+        segments, sample_rate, _ = wavTranscriber.vad_segment_generator(
+            waveFile, self.aggressive)
         self.sample_rate = sample_rate
 
         p = multiprocessing.dummy.Pool(self.threads)
         p.map(self.worker, segments)
 
 
-
 def main(args):
-    parser = argparse.ArgumentParser(description='Transcribe long audio files using webRTC VAD or use the mic input')
-    parser.add_argument('--aggressive', default=1, type=int, choices=range(4), required=False,
-                        help='Determines how aggressive filtering out non-speech is. (Integer between 0-3)')
-    parser.add_argument('--audio', required=False,
+    parser = argparse.ArgumentParser(
+        description=
+        'Transcribe long audio files using webRTC VAD or use the mic input')
+    parser.add_argument(
+        '--aggressive',
+        default=1,
+        type=int,
+        choices=range(4),
+        required=False,
+        help=
+        'Determines how aggressive filtering out non-speech is. (Integer between 0-3)'
+    )
+    parser.add_argument('--audio',
+                        required=False,
                         help='Path to the audio file to run (WAV format)')
-    parser.add_argument('--stream', required=False, action='store_true',
+    parser.add_argument('--stream',
+                        required=False,
+                        action='store_true',
                         help='To use microphone input')
-    parser.add_argument('--lang', default='en-US',
+    parser.add_argument('--lang',
+                        default='en-US',
                         help='Language option for running ASR.')
     parser.add_argument('--out', required=False, help='Output directory')
-    parser.add_argument('--threads', default=1, type=int, required=False, help='Number of concurrent voice segments to process')
-    parser.add_argument('--align', required=False, action='store_true', help='Run Montreal forced alignment using transcript')
+    parser.add_argument('--threads',
+                        default=1,
+                        type=int,
+                        required=False,
+                        help='Number of concurrent voice segments to process')
+    parser.add_argument('--align',
+                        required=False,
+                        action='store_true',
+                        help='Run Montreal forced alignment using transcript')
     args = parser.parse_args()
     if args.stream is True:
         print("Opening mic for streaming")
