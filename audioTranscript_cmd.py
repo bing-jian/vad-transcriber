@@ -29,7 +29,6 @@ class AudioVideoSplitter:
         os.makedirs(output, exist_ok=True)
         self.input_is_video = False
 
-        self.asr = speech_recognition.Recognizer()
         self.transcript_list = []
         self.threads = threads
         self.mutex = Lock()
@@ -83,36 +82,61 @@ class AudioVideoSplitter:
             p.start()
             p.join()
 
-    def process_segment(self, rate, segment, start, end):
+    def process_segment(self, rate, segment, start, end, text):
+        """Given segment and its transcript, write output files and add to subtitle file"""
         segment_name = "%.3f_%.3f" % (start, end)
         audio = np.frombuffer(segment, dtype=np.int16)
         audio_data = speech_recognition.AudioData(audio, rate, 2)
-        try:
-            text = self.asr.recognize_google(audio_data, language=self.lang)
-            logging.debug("Segment %s transcript: %s" % (segment_name, text))
-            self.write_segment(segment_name, audio_data, (start, end), text)
 
-            self.mutex.acquire()
-            self.transcript_list.append(
-                srt.Subtitle(index=len(self.transcript_list) + 1,
-                             start=timedelta(seconds=start),
-                             end=timedelta(seconds=end),
-                             content=text))
-            self.mutex.release()
-        except speech_recognition.UnknownValueError:
-            logging.debug("Segment %s unintelligible" % segment_name)
+        self.write_segment(segment_name, audio_data, (start, end), text)
+
+        self.mutex.acquire()
+        self.transcript_list.append(
+            srt.Subtitle(index=len(self.transcript_list) + 1,
+                         start=timedelta(seconds=start),
+                         end=timedelta(seconds=end),
+                         content=text))
+        self.mutex.release()
 
     def worker(self, args):
         # Called by thread pool
-        self.process_segment(self.sample_rate, *args)
+        self.process_segment(*args)
 
     def recognize(self, waveFile):
         segments, sample_rate, _ = wavTranscriber.vad_segment_generator(
             waveFile, self.aggressive)
-        self.sample_rate = sample_rate
 
+        # ASR
+        r = Recognizer(self.lang, sample_rate)
+        p = multiprocessing.Pool(self.threads)
+
+        jobs = [] # Segments to write out
+        for ret in p.map(r, segments):
+            if ret:
+                jobs.append((sample_rate,) + ret)
+        # Write output
         p = multiprocessing.dummy.Pool(self.threads)
-        p.map(self.worker, segments)
+        p.map(self.worker, jobs)
+
+
+class Recognizer:
+    """Function to run ASR on one segment"""
+    def __init__(self, language, rate):
+        self.lang = language
+        self.rate = rate
+        self.asr = speech_recognition.Recognizer()
+
+    def __call__(self, args):
+        segment, start, end = args
+        segment_name = "%.3f_%.3f" % (start, end)
+        audio = np.frombuffer(segment, dtype=np.int16)
+        audio_data = speech_recognition.AudioData(audio, self.rate, 2)
+        try:
+            text = self.asr.recognize_google(audio_data, language=self.lang)
+            logging.debug("Segment %s transcript: %s" % (segment_name, text))
+            return args + (text,)
+        except speech_recognition.UnknownValueError:
+            logging.debug("Segment %s unintelligible" % segment_name)
 
 
 def main(args):
