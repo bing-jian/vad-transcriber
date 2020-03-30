@@ -36,6 +36,7 @@ def write_wave(path, audio, sample_rate):
 
 class Frame(object):
     """Represents a "frame" of audio data."""
+
     def __init__(self, bytes, timestamp, duration):
         self.bytes = bytes
         self.timestamp = timestamp
@@ -61,16 +62,16 @@ def frame_generator(frame_duration_ms, audio, sample_rate):
 
 
 def vad_collector(sample_rate, frame_duration_ms,
-                  padding_duration_ms, vad, frames, percentage=0.85):
+                  padding_duration_ms, vad, frames, start_percentage=0.85, stop_percentage=0.20):
     """Filters out non-voiced audio frames.
 
     Given a webrtcvad.Vad and a source of audio frames, yields only
     the voiced audio.
 
     Uses a padded, sliding window algorithm over the audio frames.
-    When more than 90% of the frames in the window are voiced (as
+    When more than start_percentage% of the frames in the window are voiced (as
     reported by the VAD), the collector triggers and begins yielding
-    audio frames. Then the collector waits until 90% of the frames in
+    audio frames. Then the collector waits until stop_percentage% of the frames in
     the window are unvoiced to detrigger.
 
     The window is padded at the front and back to provide a small
@@ -95,22 +96,19 @@ def vad_collector(sample_rate, frame_duration_ms,
     triggered = False
 
     voiced_frames = []
-    frame_start = 0
     for frame_id, frame in enumerate(frames):
         is_speech = vad.is_speech(frame.bytes, sample_rate)
-
         if not triggered:
             ring_buffer.append((frame, is_speech))
             num_voiced = len([f for f, speech in ring_buffer if speech])
             # If we're NOTTRIGGERED and more than 90% of the frames in
             # the ring buffer are voiced frames, then enter the
             # TRIGGERED state.
-            if num_voiced > percentage * ring_buffer.maxlen:
+            if num_voiced > start_percentage * ring_buffer.maxlen:
                 triggered = True
                 # We want to yield all the audio we see from now until
                 # we are NOTTRIGGERED, but we have to start with the
                 # audio that's already in the ring buffer.
-                frame_start = frame_id
                 for f, s in ring_buffer:
                     voiced_frames.append(f)
                 ring_buffer.clear()
@@ -123,9 +121,9 @@ def vad_collector(sample_rate, frame_duration_ms,
             # If more than 90% of the frames in the ring buffer are
             # unvoiced, then enter NOTTRIGGERED and yield whatever
             # audio we've collected.
-            if num_unvoiced > percentage * ring_buffer.maxlen:
+            if num_unvoiced > stop_percentage * ring_buffer.maxlen:
                 triggered = False
-                yield b''.join([f.bytes for f in voiced_frames]), frame_start, frame_id
+                yield b''.join([f.bytes for f in voiced_frames]), voiced_frames[0].timestamp, voiced_frames[-1].timestamp + voiced_frames[-1].duration
                 ring_buffer.clear()
                 voiced_frames = []
     if triggered:
@@ -133,4 +131,4 @@ def vad_collector(sample_rate, frame_duration_ms,
     # If we have any leftover voiced audio when we run out of input,
     # yield it.
     if voiced_frames:
-        yield b''.join([f.bytes for f in voiced_frames]), frame_start, len(frames)
+        yield b''.join([f.bytes for f in voiced_frames]), voiced_frames[0].timestamp, voiced_frames[-1].timestamp + voiced_frames[-1].duration

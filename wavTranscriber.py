@@ -19,7 +19,7 @@ def vad_segment_generator(wavFile, aggressiveness):
     logging.debug("Caught the wav file @: %s" % (wavFile))
     audio, sample_rate, audio_length = wavSplit.read_wave(wavFile)
     vad = webrtcvad.Vad(int(aggressiveness))
-    frames = wavSplit.frame_generator(30, audio, sample_rate)
+    frames = wavSplit.frame_generator(10, audio, sample_rate)
     frames = list(frames)
-    segments = wavSplit.vad_collector(sample_rate, 30, 300, vad, frames)
+    segments = wavSplit.vad_collector(sample_rate, 10, 300, vad, frames)
     return segments, sample_rate, audio_length
